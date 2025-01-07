@@ -1,7 +1,7 @@
 use crate::{Context, Error};
 use poise::CreateReply;
 use poise::serenity_prelude::futures;
-use serenity::all::Message;
+use serenity::all::{CreateEmbed, Message};
 
 #[poise::command(
     context_menu_command = "Upload",
@@ -9,6 +9,8 @@ use serenity::all::Message;
     interaction_context = "Guild|BotDm|PrivateChannel"
 )]
 pub async fn upload(ctx: Context<'_>, msg: Message) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+
     upload_context(ctx, msg, false).await
 }
 
@@ -18,12 +20,14 @@ pub async fn upload(ctx: Context<'_>, msg: Message) -> Result<(), Error> {
     interaction_context = "Guild|BotDm|PrivateChannel"
 )]
 pub async fn upload_display(ctx: Context<'_>, msg: Message) -> Result<(), Error> {
+    ctx.defer().await?;
+
     upload_context(ctx, msg, true).await
 }
 
 pub async fn upload_context(ctx: Context<'_>, msg: Message, display: bool) -> Result<(), Error> {
     let attachments = msg.attachments.clone();
-    
+
     if attachments.is_empty() {
         ctx.send(CreateReply::default()
             .content("No file attached.")
@@ -37,103 +41,83 @@ pub async fn upload_context(ctx: Context<'_>, msg: Message, display: bool) -> Re
         .enumerate()
         .map(|(index, attachment)| {
             let msg = msg.clone();
+
             async move {
+                let mut message_builder: CreateEmbed = CreateEmbed::default();
+
                 if attachment.filename.ends_with(".log") {
-                    upload_context_pastes_dev(ctx, msg.clone(), display).await
-                } else if attachment.content_type.unwrap().contains("text/") {
-                    upload_context_pastebook(ctx, msg.clone(), display, index).await
-                } else {
-                    ctx.send(CreateReply::default()
-                        .content("Unsupported file type.")
-                        .ephemeral(true)
-                    ).await?;
-                    Ok(())
+                    let result = upload_context_pastes_dev(msg.clone(), index).await?;
+                    message_builder = result;
+                } else if let Some(content_type) = attachment.content_type {
+                    if content_type.contains("text/") {
+                        let result = upload_context_pastebook(ctx, msg.clone(), index).await?;
+                        message_builder = result;
+                    }
                 }
+
+                Ok::<_, Error>(message_builder)
             }
         });
 
-    futures::future::try_join_all(tasks).await?;
-
-    Ok(())
-}
-
-pub async fn upload_context_pastebook(ctx: Context<'_>, msg: Message, display: bool, attachment_index: usize) -> Result<(), Error> {
-    if msg.attachments.is_empty() {
-        ctx.send(CreateReply::default()
-            .content("No file attached.")
-            .ephemeral(true)
-        ).await?;
-        return Ok(());
-    }
+    let results: Vec<CreateEmbed> = futures::future::try_join_all(tasks).await?;
 
     if display {
-        ctx.defer().await?;
+        ctx.send(CreateReply {
+            embeds: results,
+            ..CreateReply::default()
+        }
+        ).await?;
     } else {
-        ctx.defer_ephemeral().await?;
-    }
-
-    if !msg.attachments.is_empty() {
-        let url = msg.attachments[attachment_index].url.clone();
-        let response = reqwest::get(url).await?;
-        let file_name = msg.attachments[attachment_index].filename.clone();
-        let bytes = response.bytes().await?;
-        let human_readable_size = format_bytes(bytes.len());
-        let string_content = String::from_utf8_lossy(&bytes);
-
-        let pastebook_link = upload_to_pastebook(string_content.to_string(), format!("{} by {}", file_name, ctx.author().display_name()).as_str()).await?;
-
-        ctx.send(CreateReply::default()
-            .content(format!(
-                "**File Name:** `{}`\n**File Size:** `{}`\n**Expires:** <t:{}:R>\n\n{}",
-                file_name,
-                human_readable_size,
-                (chrono::Utc::now() + chrono::Duration::days(1)).timestamp_millis() / 1000,
-                pastebook_link,
-            ))
-            .ephemeral(!display)
+        ctx.send(CreateReply {
+            embeds: results,
+            ephemeral: Some(true),
+            ..CreateReply::default()
+        }
         ).await?;
     }
 
     Ok(())
 }
 
-pub async fn upload_context_pastes_dev(ctx: Context<'_>, msg: Message, display: bool) -> Result<(), Error> {
-    if msg.attachments.is_empty() {
-        ctx.send(CreateReply::default()
-            .content("No file attached.")
-            .ephemeral(true)
-        ).await?;
-        return Ok(());
-    }
+pub async fn upload_context_pastebook(ctx: Context<'_>, msg: Message, attachment_index: usize) -> Result<CreateEmbed, Error> {
+    let url = msg.attachments[attachment_index].url.clone();
+    let response = reqwest::get(url).await?;
+    let file_name = msg.attachments[attachment_index].filename.clone();
+    let bytes = response.bytes().await?;
+    let human_readable_size = format_bytes(bytes.len());
+    let string_content = String::from_utf8_lossy(&bytes);
 
-    if display {
-        ctx.defer().await?;
-    } else {
-        ctx.defer_ephemeral().await?;
-    }
+    let pastebook_link = upload_to_pastebook(string_content.to_string(), format!("{} by {}", file_name, ctx.author().display_name()).as_str()).await?;
+    
+    let embed = CreateEmbed::default()
+        .title("File Successfully Uploaded")
+        .field("File Name", file_name, true)
+        .field("File Size", human_readable_size, true)
+        .field("Expires", format!("<t:{}:R>", (chrono::Utc::now() + chrono::Duration::days(1)).timestamp_millis() / 1000), true)
+        .description(pastebook_link)
+        .color(0x00FF00);
 
-    if !msg.attachments.is_empty() {
-        let url = msg.attachments[0].url.clone();
-        let response = reqwest::get(url).await?;
-        let file_name = msg.attachments[0].filename.clone();
-        let bytes = response.bytes().await?;
-        let human_readable_size = format_bytes(bytes.len());
-        let string_content = String::from_utf8_lossy(&bytes);
+    Ok(embed)
+}
 
-        let pastes_dev_link = upload_to_pastes_dev(string_content.to_string()).await?;
+pub async fn upload_context_pastes_dev(msg: Message, attachment_index: usize) -> Result<CreateEmbed, Error> {
+    let url = msg.attachments[attachment_index].url.clone();
+    let response = reqwest::get(url).await?;
+    let file_name = msg.attachments[attachment_index].filename.clone();
+    let bytes = response.bytes().await?;
+    let human_readable_size = format_bytes(bytes.len());
+    let string_content = String::from_utf8_lossy(&bytes);
 
-        ctx.send(CreateReply::default()
-            .content(format!(
-                "**File Name:** `{}`\n**File Size:** `{}`\n\n{}",
-                file_name,
-                human_readable_size,
-                pastes_dev_link,
-            ))
-            .ephemeral(!display)
-        ).await?;
-    }
+    let pastes_dev_link = upload_to_pastes_dev(string_content.to_string()).await?;
 
-    Ok(())
+    let embed = CreateEmbed::default()
+        .title("File Successfully Uploaded")
+        .field("File Name", file_name, true)
+        .field("File Size", human_readable_size, true)
+        .description(pastes_dev_link)
+        .color(0x00FF00);
+
+    Ok(embed)
 }
 
 async fn upload_to_pastebook(content: String, file_name: &str) -> Result<String, Error> {
