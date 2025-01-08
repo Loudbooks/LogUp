@@ -101,12 +101,16 @@ async fn handle_log_file(msg: Message, index: usize) -> Result<CreateEmbed, Erro
         false))
 }
 
+fn format_field(content: &str) -> String {
+    format!("`{}`", content)
+}
+
 fn create_upload_embed(file_name: &str, size: &str, link: &str, expires: bool) -> CreateEmbed {
     if expires {
         CreateEmbed::default()
             .title("File Successfully Uploaded")
-            .field("File Name", file_name, true)
-            .field("File Size", size, true)
+            .field("File Name", format_field(file_name), true)
+            .field("File Size", format_field(size), true)
             .field(
                 "Expires",
                 format!("<t:{}:R>", (chrono::Utc::now() + chrono::Duration::days(1)).timestamp()),
@@ -117,8 +121,8 @@ fn create_upload_embed(file_name: &str, size: &str, link: &str, expires: bool) -
     } else {
         CreateEmbed::default()
             .title("File Successfully Uploaded")
-            .field("File Name", file_name, true)
-            .field("File Size", size, true)
+            .field("File Name", format_field(file_name), true)
+            .field("File Size", format_field(size), true)
             .description(link)
             .color(0x00FF00)
     }
