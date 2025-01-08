@@ -1,7 +1,15 @@
-use crate::{Context, Error};
+use crate::{content_type, Context, Error};
 use poise::CreateReply;
 use poise::serenity_prelude::futures;
 use serenity::all::{CreateEmbed, Message};
+use crate::upload_request::UploadRequest;
+use crate::upload_response::UploadResponse;
+
+static PASTES_DEV: &str = "https://api.pastes.dev/post";
+static PASTEBOOK_DEV: &str = "https://api.pastebook.dev/upload";
+
+static PASTES_DEV_EXPIRE_TIME: i64 = 60 * 60 * 24 * 90; // 90 days
+static PASTEBOOK_DEV_EXPIRE_TIME: i64 = 60 * 60 * 24 * 30; // 30 days
 
 #[poise::command(
     context_menu_command = "Upload",
@@ -36,20 +44,35 @@ async fn process_upload(ctx: Context<'_>, msg: Message, display: bool) -> Result
         return Ok(());
     }
 
-    let tasks = attachments.into_iter().enumerate().map(|(index, attachment)| {
+    let tasks = attachments.into_iter().map(|attachment| {
         let msg = msg.clone();
 
         async move {
-            let mut embed = CreateEmbed::default();
+            let content = fetch_attachment_content(attachment.url.clone()).await?;
+            let human_readable_size = format_bytes(content.len());
+            let string_content = String::from_utf8_lossy(&content);
 
-            if attachment.filename.ends_with(".log") {
-                embed = handle_log_file(msg.clone(), index).await?;
-            } else if let Some(content_type) = attachment.content_type {
-                if content_type.contains("text/") {
-                    embed = handle_text_file(ctx, msg.clone(), index).await?;
-                }
-            }
-
+            let content_type = if attachment.filename.ends_with(".log") {
+                content_type::ContentType::Log
+            } else {
+                content_type::ContentType::Text
+            };
+            
+            let upload_request = UploadRequest {
+                string_content: string_content.to_string(),
+                filename: attachment.filename.clone(),
+                content_type,
+                human_readable_size: human_readable_size.clone(),
+                author: msg.author.name.clone(),
+            };
+            
+            let upload_response = match &upload_request.content_type {
+                content_type::ContentType::Text => handle_text_file(&upload_request).await?,
+                content_type::ContentType::Log => handle_log_file(&upload_request).await?,
+            };
+            
+            let embed = create_upload_embed(upload_request, upload_response);
+            
             Ok::<_, Error>(embed)
         }
     });
@@ -66,66 +89,46 @@ async fn process_upload(ctx: Context<'_>, msg: Message, display: bool) -> Result
     Ok(())
 }
 
-async fn handle_text_file(ctx: Context<'_>, msg: Message, index: usize) -> Result<CreateEmbed, Error> {
-    let attachment = &msg.attachments[index];
-    let content = fetch_attachment_content(attachment.url.clone()).await?;
-    let human_readable_size = format_bytes(content.len());
-    let string_content = String::from_utf8_lossy(&content);
-
+async fn handle_text_file(upload_request: &UploadRequest) -> Result<UploadResponse, Error> {
     let link = upload_to_pastebook(
-        string_content.to_string(),
-        &format!("{} by {}", attachment.filename, ctx.author().display_name()),
+        upload_request.string_content.clone(),
+        &format!("{} by {}", upload_request.filename, upload_request.author),
     )
         .await?;
-
-    Ok(create_upload_embed(
-        &attachment.filename,
-        &human_readable_size,
-        &link,
-        true,
-    ))
+    
+    Ok(
+        UploadResponse {
+            link,
+            expires: (chrono::Utc::now() + chrono::Duration::seconds(PASTEBOOK_DEV_EXPIRE_TIME)).timestamp(),
+        }
+    )
 }
 
-async fn handle_log_file(msg: Message, index: usize) -> Result<CreateEmbed, Error> {
-    let attachment = &msg.attachments[index];
-    let content = fetch_attachment_content(attachment.url.clone()).await?;
-    let human_readable_size = format_bytes(content.len());
-    let string_content = String::from_utf8_lossy(&content);
-
-    let link = upload_to_pastes_dev(string_content.to_string()).await?;
-
-    Ok(create_upload_embed(
-        &attachment.filename,
-        &human_readable_size,
-        &link,
-        false))
+async fn handle_log_file(upload_request: &UploadRequest) -> Result<UploadResponse, Error> {
+    let link = upload_to_pastes_dev(upload_request.string_content.clone()).await?;
+    
+    Ok(UploadResponse {
+        link,
+        expires: (chrono::Utc::now() + chrono::Duration::seconds(PASTES_DEV_EXPIRE_TIME)).timestamp(),
+    })
 }
 
 fn format_field(content: &str) -> String {
     format!("`{}`", content)
 }
 
-fn create_upload_embed(file_name: &str, size: &str, link: &str, expires: bool) -> CreateEmbed {
-    if expires {
-        CreateEmbed::default()
-            .title("File Successfully Uploaded")
-            .field("File Name", format_field(file_name), true)
-            .field("File Size", format_field(size), true)
-            .field(
-                "Expires",
-                format!("<t:{}:R>", (chrono::Utc::now() + chrono::Duration::days(1)).timestamp()),
-                true,
-            )
-            .description(link)
-            .color(0x00FF00)
-    } else {
-        CreateEmbed::default()
-            .title("File Successfully Uploaded")
-            .field("File Name", format_field(file_name), true)
-            .field("File Size", format_field(size), true)
-            .description(link)
-            .color(0x00FF00)
-    }
+fn create_upload_embed(upload_request: UploadRequest, upload_response: UploadResponse) -> CreateEmbed {
+    CreateEmbed::default()
+        .title("File Successfully Uploaded")
+        .field("File Name", format_field(&upload_request.filename), true)
+        .field("File Size", format_field(&upload_request.human_readable_size), true)
+        .field(
+            "Expires",
+            format!("<t:{}:R>", { upload_response.expires }),
+            true,
+        )
+        .description(upload_response.link)
+        .color(0x00FF00)
 }
 
 async fn fetch_attachment_content(url: String) -> Result<Vec<u8>, Error> {
@@ -136,8 +139,9 @@ async fn fetch_attachment_content(url: String) -> Result<Vec<u8>, Error> {
 async fn upload_to_pastebook(content: String, file_name: &str) -> Result<String, Error> {
     let client = reqwest::Client::new();
     let response = client
-        .post("https://api.pastebook.dev/upload")
+        .post(PASTEBOOK_DEV)
         .header("title", file_name)
+        .header("expires", (PASTEBOOK_DEV_EXPIRE_TIME * 1000).to_string())
         .header("Content-Type", "text/plain")
         .body(content)
         .send()
@@ -150,7 +154,7 @@ async fn upload_to_pastebook(content: String, file_name: &str) -> Result<String,
 async fn upload_to_pastes_dev(content: String) -> Result<String, Error> {
     let client = reqwest::Client::new();
     let response = client
-        .post("https://api.pastes.dev/post")
+        .post(PASTES_DEV)
         .header("Content-Type", "text/log")
         .body(content)
         .send()

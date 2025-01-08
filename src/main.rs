@@ -1,4 +1,7 @@
 mod upload;
+mod upload_response;
+mod upload_request;
+mod content_type;
 
 use std::env;
 use poise::CreateReply;
