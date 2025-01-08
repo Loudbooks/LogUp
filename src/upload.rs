@@ -158,7 +158,7 @@ async fn upload_to_pastes_dev(content: String) -> Result<String, Error> {
         .ok_or_else(|| Error::from("Missing Location header"))?
         .to_str()?;
 
-    Ok(format!("https://pastes.dev{}", location))
+    Ok(format!("https://pastes.dev/{}", location))
 }
 
 fn format_bytes(bytes: usize) -> String {
