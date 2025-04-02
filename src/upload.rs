@@ -6,7 +6,7 @@ use crate::upload_request::UploadRequest;
 use crate::upload_response::UploadResponse;
 
 static PASTES_DEV: &str = "https://api.pastes.dev/post";
-static PASTEBOOK_DEV: &str = "https://api.pastebook.dev/upload";
+static PASTEBOOK_DEV: &str = "https://pastebook.dev/api/upload";
 
 static PASTES_DEV_EXPIRE_TIME: i64 = 60 * 60 * 24 * 90; // 90 days
 static PASTEBOOK_DEV_EXPIRE_TIME: i64 = 60 * 60 * 24 * 30; // 30 days
