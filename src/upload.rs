@@ -74,10 +74,9 @@ async fn process_upload(ctx: Context<'_>, msg: Message, display: bool) -> Result
             if upload_response.is_err() {
                 let embed = CreateEmbed::default()
                     .title("File Upload Failed")
-                    .description(format!(
-                        "Failed to upload file: {}",
-                        upload_response.as_ref().err().unwrap()
-                    ))
+                    .description(
+                        upload_response.as_ref().err().unwrap().to_string(),
+                    )
                     .color(0xFF0000);
                 
                 return Ok::<_, Error>(embed);
