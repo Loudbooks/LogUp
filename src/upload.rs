@@ -70,7 +70,7 @@ async fn process_upload(ctx: Context<'_>, msg: Message, display: bool) -> Result
                 content_type::ContentType::Text => handle_text_file(&upload_request).await?,
                 content_type::ContentType::Log => handle_log_file(&upload_request).await?,
             };
-            
+
             let embed = create_upload_embed(upload_request, upload_response);
             
             Ok::<_, Error>(embed)
@@ -146,6 +146,13 @@ async fn upload_to_pastebook(content: String, file_name: &str) -> Result<String,
         .body(content)
         .send()
         .await?;
+    
+    if !response.status().is_success() {
+        return Err(Error::from(format!(
+            "Failed to upload file: {}",
+            response.status()
+        )));
+    }
 
     let id = response.text().await?;
     Ok(format!("https://pastebook.dev/p/{}", id))
@@ -159,6 +166,13 @@ async fn upload_to_pastes_dev(content: String) -> Result<String, Error> {
         .body(content)
         .send()
         .await?;
+    
+    if !response.status().is_success() {
+        return Err(Error::from(format!(
+            "Failed to upload file: {}",
+            response.status()
+        )));
+    }
 
     let location = response
         .headers()
