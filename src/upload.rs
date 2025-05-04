@@ -67,11 +67,23 @@ async fn process_upload(ctx: Context<'_>, msg: Message, display: bool) -> Result
             };
             
             let upload_response = match &upload_request.content_type {
-                content_type::ContentType::Text => handle_text_file(&upload_request).await?,
-                content_type::ContentType::Log => handle_log_file(&upload_request).await?,
+                content_type::ContentType::Text => handle_text_file(&upload_request).await,
+                content_type::ContentType::Log => handle_log_file(&upload_request).await
             };
+            
+            if upload_response.is_err() {
+                let embed = CreateEmbed::default()
+                    .title("File Upload Failed")
+                    .description(format!(
+                        "Failed to upload file: {}",
+                        upload_response.as_ref().err().unwrap()
+                    ))
+                    .color(0xFF0000);
+                
+                return Ok::<_, Error>(embed);
+            }
 
-            let embed = create_upload_embed(upload_request, upload_response);
+            let embed = create_upload_embed(upload_request, upload_response.unwrap());
             
             Ok::<_, Error>(embed)
         }
@@ -146,7 +158,7 @@ async fn upload_to_pastebook(content: String, file_name: &str) -> Result<String,
         .body(content)
         .send()
         .await?;
-    
+
     if !response.status().is_success() {
         return Err(Error::from(format!(
             "Failed to upload file: {}",
@@ -166,7 +178,7 @@ async fn upload_to_pastes_dev(content: String) -> Result<String, Error> {
         .body(content)
         .send()
         .await?;
-    
+
     if !response.status().is_success() {
         return Err(Error::from(format!(
             "Failed to upload file: {}",
