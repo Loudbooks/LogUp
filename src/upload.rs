@@ -153,15 +153,26 @@ async fn fetch_attachment_content(url: String) -> Result<Vec<u8>, Error> {
 
 async fn upload_to_pastebook(content: String, file_name: &str, log: bool) -> Result<String, Error> {
     let client = reqwest::Client::new();
-    let response = client
-        .post(PASTEBOOK_DEV)
-        .header("title", file_name)
-        .header("expires", (PASTEBOOK_DEV_EXPIRE_TIME * 1000).to_string())
-        .header("Content-Type", "text/plain")
-        .header("lang", if log { "log" } else { "none" })
-        .body(content)
-        .send()
-        .await?;
+    let response = if log {
+        client
+            .post(PASTEBOOK_DEV)
+            .header("title", file_name)
+            .header("expires", (PASTEBOOK_DEV_EXPIRE_TIME * 1000).to_string())
+            .header("Content-Type", "text/plain")
+            .header("lang", "log")
+            .body(content)
+            .send()
+            .await?
+    } else {
+        client
+            .post(PASTEBOOK_DEV)
+            .header("title", file_name)
+            .header("expires", (PASTEBOOK_DEV_EXPIRE_TIME * 1000).to_string())
+            .header("Content-Type", "text/plain")
+            .body(content)
+            .send()
+            .await?
+    };
 
     if !response.status().is_success() {
         return Err(Error::from(format!(
