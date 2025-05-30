@@ -5,10 +5,8 @@ use serenity::all::{CreateEmbed, Message};
 use crate::upload_request::UploadRequest;
 use crate::upload_response::UploadResponse;
 
-static PASTES_DEV: &str = "https://api.pastes.dev/post";
 static PASTEBOOK_DEV: &str = "https://pastebook.dev/api/upload";
 
-static PASTES_DEV_EXPIRE_TIME: i64 = 60 * 60 * 24 * 90; // 90 days
 static PASTEBOOK_DEV_EXPIRE_TIME: i64 = 60 * 60 * 24 * 30; // 30 days
 
 #[poise::command(
@@ -104,6 +102,7 @@ async fn handle_text_file(upload_request: &UploadRequest) -> Result<UploadRespon
     let link = upload_to_pastebook(
         upload_request.string_content.clone(),
         &format!("{} by {}", upload_request.filename, upload_request.author),
+        false
     )
         .await?;
     
@@ -116,11 +115,16 @@ async fn handle_text_file(upload_request: &UploadRequest) -> Result<UploadRespon
 }
 
 async fn handle_log_file(upload_request: &UploadRequest) -> Result<UploadResponse, Error> {
-    let link = upload_to_pastes_dev(upload_request.string_content.clone()).await?;
+    let link = upload_to_pastebook(
+        upload_request.string_content.clone(),
+        &format!("{} by {}", upload_request.filename, upload_request.author),
+        true
+    )
+        .await?;
     
     Ok(UploadResponse {
         link,
-        expires: (chrono::Utc::now() + chrono::Duration::seconds(PASTES_DEV_EXPIRE_TIME)).timestamp(),
+        expires: (chrono::Utc::now() + chrono::Duration::seconds(PASTEBOOK_DEV_EXPIRE_TIME)).timestamp(),
     })
 }
 
@@ -147,13 +151,14 @@ async fn fetch_attachment_content(url: String) -> Result<Vec<u8>, Error> {
     Ok(response.bytes().await?.to_vec())
 }
 
-async fn upload_to_pastebook(content: String, file_name: &str) -> Result<String, Error> {
+async fn upload_to_pastebook(content: String, file_name: &str, log: bool) -> Result<String, Error> {
     let client = reqwest::Client::new();
     let response = client
         .post(PASTEBOOK_DEV)
         .header("title", file_name)
         .header("expires", (PASTEBOOK_DEV_EXPIRE_TIME * 1000).to_string())
         .header("Content-Type", "text/plain")
+        .header("lang", if log { "log" } else { "none" })
         .body(content)
         .send()
         .await?;
@@ -167,31 +172,6 @@ async fn upload_to_pastebook(content: String, file_name: &str) -> Result<String,
 
     let id = response.text().await?;
     Ok(format!("https://pastebook.dev/p/{}", id))
-}
-
-async fn upload_to_pastes_dev(content: String) -> Result<String, Error> {
-    let client = reqwest::Client::new();
-    let response = client
-        .post(PASTES_DEV)
-        .header("Content-Type", "text/log")
-        .body(content)
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        return Err(Error::from(format!(
-            "Failed to upload file: {}",
-            response.status()
-        )));
-    }
-
-    let location = response
-        .headers()
-        .get("Location")
-        .ok_or_else(|| Error::from("Missing Location header"))?
-        .to_str()?;
-
-    Ok(format!("https://pastes.dev/{}", location))
 }
 
 fn format_bytes(bytes: usize) -> String {
